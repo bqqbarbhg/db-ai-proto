@@ -121,14 +121,18 @@ class Rule(object):
         new_entities = tuple(Entity(e.id, e.name, tuple(t), tuple(nt)) for e,t,nt in zip(entities, tags, notags))
         return unswizzle_tuple(entity_list, new_entities, swizzle)
 
-    def format_desc(self, entities):
+    def format_desc(self, entity_list, swizzle=None):
         """Returns a description of the rule application for entities"""
 
+        entities = swizzle_tuple(entity_list, swizzle)
         namemap = { n: e.name for n,e in zip(self.names, entities) }
         return self.desc.format(**namemap)
 
     def format_rule(self):
-        """Pretty prints the rule using the format of `parse_rules`"""
+        """Pretty prints the rule using the format of `parse_rules`
+        
+        swizzle: Optional list of indices for which entities to apply the rule for
+        """
 
         def fmt_tag(sign, tag):
             if tag.binds:

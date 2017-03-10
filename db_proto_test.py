@@ -34,6 +34,11 @@ rs = rules[2].forward(es, swizzle=[0, 3])
 rs = rules[1].forward(rs, swizzle=[0, 1])
 rs = rules[0].forward(rs, swizzle=[0, 1, 2])
 
+
+print rules[2].format_desc(es, swizzle=[0, 3])
+print rules[1].format_desc(es, swizzle=[0, 1])
+print rules[0].format_desc(es, swizzle=[0, 1, 2])
+print
 print db.format_entities(es)
 print '->'
 print db.format_entities(rs)
