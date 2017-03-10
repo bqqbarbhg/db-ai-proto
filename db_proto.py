@@ -1,4 +1,4 @@
-from collections import namedtuple, defaultdict, OrderedDict
+from collections import namedtuple, defaultdict, OrderedDict, Counter
 import itertools
 
 import db_parse
@@ -55,6 +55,7 @@ class Rule(object):
         self.num = len(names)
         self.pre = pre
         self.post = post
+        self.action = '!' in name
 
     def forward(self, entity_list, swizzle=None):
         """Applies the rule forwards to entities, which is what the simulation
@@ -65,12 +66,12 @@ class Rule(object):
         swizzle: Optional list of indices for which entities to apply the rule for
         """
 
-        if len(swizzle) < self.num if swizzle else len(entities) < self.num:
+        if len(swizzle) < self.num if swizzle else len(entity_list) < self.num:
             raise IndexError("Not enough entities provided for rule '{}'".format(self.name))
 
         entities = swizzle_tuple(entity_list, swizzle)
 
-        tags = [set(e.tags) for e in entities]
+        tags = [set(t for t in e.tags if '!' not in t.tag) for e in entities]
 
         if not all(pattern_match(p, entities) for p in self.pre):
             return None
@@ -91,12 +92,12 @@ class Rule(object):
         """Applies the rule backwards to entities, which returns entities that
         satisfy the preconditions. Also removes tags from the entities that
         are obtained from the postconditions.
-        Returns modified entities, cannot fail.
+        Returns modified entities or None if impossible.
 
         swizzle: Optional list of indices for which entities to apply the rule for
         """
 
-        if len(swizzle) < self.num if swizzle else len(entities) < self.num:
+        if len(swizzle) < self.num if swizzle else len(entity_list) < self.num:
             raise IndexError("Not enough entities provided for rule '{}'".format(self.name))
 
         entities = swizzle_tuple(entity_list, swizzle)
@@ -104,6 +105,7 @@ class Rule(object):
         tags = [set(e.tags) for e in entities]
         notags = [set(e.notags) for e in entities]
 
+        # Remove provided postconditions
         for pat in self.post:
             binds = tuple(entities[b].id for b in pat.tag.binds)
             if pat.sign:
@@ -111,12 +113,19 @@ class Rule(object):
             else:
                 notags[pat.entity].discard(Tag(pat.tag.tag, binds))
 
+        # Add required precondition tags
         for pat in self.pre:
             binds = tuple(entities[b].id for b in pat.tag.binds)
             if pat.sign:
                 tags[pat.entity].add(Tag(pat.tag.tag, binds))
             else:
                 notags[pat.entity].add(Tag(pat.tag.tag, binds))
+
+        # If there are multiples of some tag then this production is invalid
+        for ts in tags:
+            tagcount = Counter(t.tag for t in ts)
+            if ts and tagcount.most_common(1)[0][1] > 1:
+                return None
 
         new_entities = tuple(Entity(e.id, e.name, tuple(t), tuple(nt)) for e,t,nt in zip(entities, tags, notags))
         return unswizzle_tuple(entity_list, new_entities, swizzle)
@@ -211,4 +220,87 @@ def format_entities(entities):
         return '{} {}'.format(entity.name, tags)
     
     return '\n'.join(fmt_entity(e) for e in entities)
+
+AiRule = namedtuple('AiRule', 'rule swizzle')
+AiChain = namedtuple('AiChain', 'start rules')
+
+def format_ai_rule(ai_rule):
+    """Pretty prints AI rule in form of 'rule-name(0,1,2)'"""
+
+    swizzle = ','.join(str(s) for s in ai_rule.swizzle)
+    return '{}({})'.format(ai_rule.rule.name, swizzle)
+
+def ai_search(rules, root_rule, num_entities, max_depth):
+    """Search for chains of rules to reach a state where a root rule can be
+    applied
+
+    rules: Rules to combine
+    root_rule: All the rule chains will lead to this rule
+    num_entities: For how many entities to search the solution for
+    max_depth: Maximum depth of the chain
+
+    Returns a generator of possible rule chains yielding results lazily,
+    querying all the rules may take an unreasonable time so there is an
+    attempt to return the most relevant and plausible ones first.
+    """
+
+    return ai_search_dumb(rules, root_rule, num_entities, max_depth)
+
+def ai_search_dumb(rules, root_rule, num_entities, max_depth):
+    """See ai_search for the interface.
+
+    Probably the dumbest and most straightforward implementation of this
+    function. Just try all combinations of increasing length.
+    """
+
+    indices = list(range(num_entities))
+
+    def dumb_step(entities, chain, depth):
+
+        # Yield current result (also the first)
+        yield AiChain(entities, chain)
+
+        # Reached the end
+        if depth >= max_depth:
+            return
+
+        # Try each rule in order
+        for rule in rules:
+            # Well, at least make sure we have enough entities to apply
+            if num_entities < rule.num:
+                continue
+
+            # Iterate through all permutations of the entities
+            for permutation in itertools.permutations(indices, rule.num):
+
+                # Action rules require the actor to be the first entity
+                if rule.action and permutation[0] != 0:
+                    continue
+
+                # Try to simulate the rule backwards
+                enext = rule.backward(entities, swizzle=permutation)
+                if not enext:
+                    continue
+
+                cnext = [AiRule(rule, permutation)] + chain
+
+                # Check that the chain can be actually applied
+                es = enext
+                for r, s in cnext:
+                    es = r.forward(es, swizzle=s)
+                    if not es:
+                        break
+                else:
+                    # If the loop went through without breaking the chain
+                    # is valid
+                    for c in dumb_step(enext, cnext, depth + 1):
+                        yield c
+
+    start_entities = [Entity(i, 'e_{}'.format(i), (), ()) for i in range(num_entities)]
+
+    # Always apply the root rule
+    start_entities = root_rule.backward(start_entities)
+
+    for chain in dumb_step(start_entities, [AiRule(root_rule, indices[:root_rule.num])], 0):
+        yield chain
 

@@ -32,7 +32,7 @@ class DbParser(Parser):
         self.pos = 0
 
     def lex_word(self):
-        return self.lex_re(r'[A-Za-z0-9][A-Za-z0-9\-]*')
+        return self.lex_re(r'[A-Za-z0-9][A-Za-z0-9\-]*!?')
 
     def lex_line(self):
         self.lex_ws()

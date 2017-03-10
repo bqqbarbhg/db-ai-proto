@@ -1,44 +1,61 @@
 import db_proto as db
+import itertools
+import re
 
 weaponhit = r'''
-# weapon-hit
+
+# weapon-hit!
 > {dwarf} hits {thing} with {weapon}
-dwarf +dwarf +hold(weapon)
-weapon +weapon
-->
-thing +hurt!
+    dwarf +dwarf +hold(weapon)
+    weapon +weapon
+    ->
+    thing +hurt!
 
-# pick-up
+# pick-up!
 > {dwarf} picks up {thing}
-dwarf +dwarf -hold
-thing +holdable
-->
-dwarf +hold(thing)
+    dwarf +dwarf -hold
+    thing +holdable
+    ->
+    dwarf +hold(thing)
 
-# drop
+# drop!
 > {dwarf} drops {thing}
-dwarf +dwarf +hold(thing)
-thing +holdable
-->
-dwarf -hold
+    dwarf +dwarf +hold(thing)
+    thing +holdable
+    ->
+    dwarf -hold
+    thing +fall!
+
+# fall-break
+> {object} breaks as it falls
+    object +fall!
+    ->
+    object +break!
+
+# glass-break
+> {glass} breaks into shards
+    glass +glass +break!
+    ->
+    glass +weapon
+
 '''
 
 rules = db.parse_rules(weaponhit)
+best_chains = []
+seen = set()
 
-es = [db.Entity(i, 'e_{}'.format(i), (), ()) for i in range(4)]
-es = rules[0].backward(es, swizzle=[0, 1, 2])
-es = rules[1].backward(es, swizzle=[0, 1])
-es = rules[2].backward(es, swizzle=[0, 3])
+src = db.ai_search(rules, rules[0], num_entities=3, max_depth=5)
+for chain in src:
+    if any(any('!' in t.tag for t in e.tags) for e in chain.start):
+        continue
+    total_tags = sum(len(set(t.tag for t in e.tags + e.notags)) for e in chain.start)
+    best_chains.append((float(total_tags) + float(len(chain.rules)) * 0.5, chain))
 
-rs = rules[2].forward(es, swizzle=[0, 3])
-rs = rules[1].forward(rs, swizzle=[0, 1])
-rs = rules[0].forward(rs, swizzle=[0, 1, 2])
+for score, chain in itertools.islice(sorted(best_chains), 100):
+    if chain.start in seen:
+        continue
+    seen.add(chain.start)
 
+    desc = ' -> '.join(db.format_ai_rule(r) for r in chain.rules) 
+    print '[{}]: {}'.format(score, desc)
 
-print rules[2].format_desc(es, swizzle=[0, 3])
-print rules[1].format_desc(es, swizzle=[0, 1])
-print rules[0].format_desc(es, swizzle=[0, 1, 2])
-print
-print db.format_entities(es)
-print '->'
-print db.format_entities(rs)
