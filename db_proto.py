@@ -1,5 +1,6 @@
 from collections import namedtuple, defaultdict, OrderedDict, Counter
 import itertools
+import heapq
 
 import db_parse
 
@@ -244,7 +245,21 @@ def ai_search(rules, root_rule, num_entities, max_depth):
     attempt to return the most relevant and plausible ones first.
     """
 
-    return ai_search_dumb(rules, root_rule, num_entities, max_depth)
+    return ai_search_greedy(rules, root_rule, num_entities, max_depth)
+
+def check_chain(entities, ai_chain):
+    """Check whether an AI chain is actually applicable"""
+
+    if not entities:
+        return False
+
+    es = entities
+    for r, s in ai_chain:
+        es = r.forward(es, swizzle=s)
+        if not es:
+            return False
+    return True
+
 
 def ai_search_dumb(rules, root_rule, num_entities, max_depth):
     """See ai_search for the interface.
@@ -285,12 +300,7 @@ def ai_search_dumb(rules, root_rule, num_entities, max_depth):
                 cnext = [AiRule(rule, permutation)] + chain
 
                 # Check that the chain can be actually applied
-                es = enext
-                for r, s in cnext:
-                    es = r.forward(es, swizzle=s)
-                    if not es:
-                        break
-                else:
+                if check_chain(enext, cnext):
                     # If the loop went through without breaking the chain
                     # is valid
                     for c in dumb_step(enext, cnext, depth + 1):
@@ -303,4 +313,43 @@ def ai_search_dumb(rules, root_rule, num_entities, max_depth):
 
     for chain in dumb_step(start_entities, [AiRule(root_rule, indices[:root_rule.num])], 0):
         yield chain
+
+def ai_search_greedy(rules, root_rule, num_entities, max_depth):
+    """See ai_search for the interface.
+
+    Some kind of greedy search.
+    """
+
+    indices = list(range(num_entities))
+
+    Node = namedtuple('Node', 'score entities chain')
+
+    start_entities = [Entity(i, 'e_{}'.format(i), (), ()) for i in range(num_entities)]
+    work = [Node(0, start_entities, [AiRule(root_rule, list(range(root_rule.num)))])]
+
+    # WIP
+    # rules_for_tag = defaultdict(set)
+    # for rule in rules:
+    #     for post in rule.post:
+
+    while work:
+        node = heapq.heappop(work)
+        rule = node.chain[0]
+        entities = rule.rule.backward(node.entities, swizzle=rule.swizzle)
+
+        if not check_chain(entities, node.chain):
+            continue
+
+        yield AiChain(entities, node.chain)
+
+        if len(node.chain) <= max_depth:
+            for rule in rules:
+                if num_entities < rule.num:
+                    continue
+                for permutation in itertools.permutations(indices, rule.num):
+                    if rule.action and permutation[0] != 0:
+                        continue
+
+                    ai_rule = AiRule(rule, permutation)
+                    heapq.heappush(work, Node(1, entities, [ai_rule] + node.chain))
 
